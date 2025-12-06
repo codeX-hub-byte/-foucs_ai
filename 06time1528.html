@@ -1,0 +1,1148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FOCUS AI: School Focus & Exam Detection</title>
+
+    <!-- Tailwind -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- TensorFlow + MoveNet -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+
+    <style>
+        body {
+            background-color: #f6f7fb;
+            color: #1e293b;
+            font-family: "Segoe UI", sans-serif;
+        }
+
+        canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border: 2px solid #d0d6e2;
+            border-radius: 6px;
+        }
+
+        input[type=range] {
+            accent-color: #2563eb;
+        }
+
+        .school-header {
+            background-color: #1e3a8a;
+            border-bottom: 3px solid #172554;
+        }
+
+        .hud-panel {
+            background: #ffffff;
+            border: 1px solid #d7dce3;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+        }
+
+        .school-footer {
+            background-color: #e2e8f0;
+            color: #475569;
+        }
+
+        #loader, #examLoader {
+            background: rgba(255,255,255,0.92);
+        }
+
+        #loader h2, #examLoader h2 { color: #1e3a8a; }
+        #loader p, #examLoader p { color: #475569; }
+
+        .focused-text { color: #059669 !important; }
+        .warning-text { color: #ca8a04 !important; }
+        .danger-text  { color: #dc2626 !important; }
+
+        .suspect-text { color: #dc2626 !important; }
+        .ok-text { color: #16a34a !important; }
+
+        /* Splash */
+        #splash-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            transition: opacity 0.5s ease-out;
+        }
+
+        #splash-screen.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        #splash-screen img {
+            width: 100%;
+            max-width: 300px;
+            height: auto;
+        }
+        
+        /* Recording Status Indicator */
+        .recording-status {
+            animation: pulse-red 2s infinite;
+        }
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(220, 38, 38, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
+        }
+
+        /* Home background wrapper */
+        .modeSelection-bg {
+            background-color: #f6f7fb;
+        }
+
+        /* Dark mode support */
+        body.dark-mode {
+            background-color: #020617;
+            color: #e5e7eb;
+        }
+        body.dark-mode .school-header {
+            background-color: #020617;
+            border-bottom-color: #0f172a;
+        }
+        body.dark-mode .school-footer {
+            background-color: #020617;
+            color: #9ca3af;
+        }
+        body.dark-mode .hud-panel {
+            background-color: #020617;
+            border-color: #1f2937;
+        }
+        body.dark-mode .modeSelection-bg {
+            background-color: #020617;
+        }
+    </style>
+</head>
+
+<body class="h-screen flex flex-col overflow-hidden">
+
+    <!-- Splash Screen -->
+    <div id="splash-screen">
+        <img src="ailogo.png" alt="FOCUS AI Logo">
+    </div>
+
+    <!-- MODE SELECTION (Home) -->
+    <div id="modeSelection" class="hidden flex-1 flex flex-col modeSelection-bg">
+        
+        <!-- Header -->
+        <div class="school-header p-4 flex justify-between items-center">
+            <div>
+                <h1 class="text-xl font-bold text-white tracking-widest">
+                    FOCUS<span class="text-yellow-300">AI</span>
+                </h1>
+                <p class="text-xs text-blue-200">School Monitoring & Analytics</p>
+            </div>
+
+            <div class="flex items-center gap-4">
+                <div class="text-xs text-blue-100 text-right hidden sm:block">
+                    <div class="uppercase tracking-wide">MODE SELECTION</div>
+                    <div class="text-[10px]">Choose how you want to monitor today</div>
+                </div>
+
+                <!-- Menu button -->
+                <button onclick="toggleMainMenu()"
+                    class="p-2 rounded-full bg-blue-900/60 hover:bg-blue-800 text-blue-100 flex flex-col justify-center">
+                    <span class="block w-4 h-[2px] bg-blue-100 mb-[3px]"></span>
+                    <span class="block w-4 h-[2px] bg-blue-100 mb-[3px]"></span>
+                    <span class="block w-4 h-[2px] bg-blue-100"></span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Body -->
+        <div class="flex-1 flex items-center justify-center px-4">
+            <div class="max-w-3xl w-full flex flex-col items-center gap-8">
+
+                
+                <!-- Option Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
+
+                    <!-- Class Detection Button -->
+                    <button onclick="selectMode('class')"
+                        class="rounded-2xl bg-white shadow p-6 border hover:shadow-md transition flex flex-col items-center gap-3">
+                        
+                        <div class="w-10 h-10 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
+                            C
+                        </div>
+                        <div class="text-sm font-bold text-slate-800">Class Detection</div>
+                    </button>
+
+                    <!-- Exam Detection Button -->
+                    <button onclick="selectMode('exam')"
+                        class="rounded-2xl bg-white shadow p-6 border hover:shadow-md transition flex flex-col items-center gap-3">
+                        
+                        <div class="w-10 h-10 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center font-bold">
+                            E
+                        </div>
+                        <div class="text-sm font-bold text-slate-800">Exam Detection</div>
+                    </button>
+
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="school-footer p-3 text-[11px] text-center border-t border-slate-300">
+            FOCUSAI · Choose a mode to begin monitoring
+        </div>
+    </div>
+
+    <!-- CLASS DETECTION APP -->
+    <div id="classApp" class="hidden flex-1 flex flex-col overflow-hidden">
+        <div class="school-header p-4 flex flex-wrap justify-between items-center gap-4">
+            <div>
+                <h1 class="text-xl font-bold text-white tracking-widest">
+                    FOCUS<span class="text-yellow-300">AI</span>
+                </h1>
+                <p class="text-xs text-blue-200">Class Activity Attention Tracking</p>
+            </div>
+
+            <div class="flex items-center gap-4 bg-white px-4 py-2 rounded-lg shadow hud-panel">
+                <label class="text-xs font-bold text-slate-700">STRICTNESS:</label>
+                <input id="sensitivity" type="range" min="10" max="90" value="50" class="w-32 h-1">
+                <span id="senseVal" class="text-xs font-mono text-blue-700">50%</span>
+            </div>
+
+            <div class="flex gap-6 items-center">
+                <div class="text-center">
+                    <div class="text-[10px] text-blue-100 uppercase">Students</div>
+                    <div id="countDisplay" class="text-2xl font-bold text-white leading-none">0</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-[10px] text-blue-100 uppercase">Focus Level</div>
+                    <div id="focusDisplay" class="text-2xl font-bold text-white leading-none">--</div>
+                </div>
+                <!-- Active student info -->
+                <div class="hidden sm:flex flex-col text-[10px] text-blue-100" id="activeStudentInfo">
+                    <span id="activeStudentNameLabel">Student: --</span>
+                    <span id="activeStudentRollLabel">Roll No: --</span>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <div class="flex items-center gap-2">
+                    <div id="recordStatus" class="w-3 h-3 bg-red-600 rounded-full hidden"></div>
+                    <p id="recordText" class="text-sm font-bold text-white hidden">RECORDING...</p>
+                </div>
+
+                <button id="initBtn"
+                    onclick="toggleSystem()"
+                    class="bg-yellow-400 hover:bg-yellow-300 text-black px-4 py-2 rounded font-bold text-sm transition shadow">
+                    START SYSTEM
+                </button>
+
+                <!-- Menu button -->
+                <button onclick="toggleMainMenu()"
+                    class="p-2 rounded-full bg-blue-900/60 hover:bg-blue-800 text-blue-100 flex flex-col justify-center">
+                    <span class="block w-4 h-[2px] bg-blue-100 mb-[3px]"></span>
+                    <span class="block w-4 h-[2px] bg-blue-100 mb-[3px]"></span>
+                    <span class="block w-4 h-[2px] bg-blue-100"></span>
+                </button>
+            </div>
+        </div>
+
+        <div class="relative flex-1 bg-white w-full flex items-center justify-center overflow-hidden">
+            <video id="video" class="hidden" playsinline></video>
+            <canvas id="canvas"></canvas>
+
+            <div id="loader" class="absolute inset-0 flex flex-col items-center justify-center z-30 hidden">
+                <div class="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                <h2 class="text-xl font-bold">LOADING AI MODEL</h2>
+                <p class="text-sm mt-2">MoveNet Multi-Person Loading…</p>
+            </div>
+        </div>
+
+        <div class="school-footer p-2 text-[10px] flex justify-center gap-6 border-t border-slate-300">
+            <span class="flex items-center gap-1">
+                <div class="w-2 h-2 bg-green-500 rounded-full"></div> Focused
+            </span>
+            <span class="flex items-center gap-1">
+                <div class="w-2 h-2 bg-red-500 rounded-full"></div> Distracted
+            </span>
+            <span class="hidden sm:flex items-center gap-1 text-slate-500">
+                Session is recorded automatically while system is ON
+            </span>
+        </div>
+    </div>
+
+    <!-- EXAM DETECTION APP -->
+    <div id="examApp" class="hidden flex-1 flex flex-col overflow-hidden">
+        <div class="school-header p-4 flex flex-wrap justify-between items-center gap-4">
+            <div>
+                <h1 class="text-xl font-bold text-white tracking-widest">
+                    FOCUS<span class="text-yellow-300">AI</span>
+                </h1>
+                <p class="text-xs text-blue-200">Exam Monitoring Mode</p>
+            </div>
+
+            <div class="flex items-center gap-6">
+                <div class="flex flex-col text-[10px] text-blue-100" id="examActiveStudentInfo">
+                    <span id="examActiveStudentNameLabel">Student: --</span>
+                    <span id="examActiveStudentRollLabel">Roll No: --</span>
+                </div>
+
+                <div class="flex items-center gap-4 bg-white/95 px-4 py-2 rounded-lg shadow hud-panel">
+                    <div class="text-[10px] font-bold text-slate-700 uppercase">Mode</div>
+                    <div class="text-xs font-semibold text-amber-600">EXAM DETECTION · BETA</div>
+                </div>
+
+                <!-- Menu button -->
+                <button onclick="toggleMainMenu()"
+                    class="p-2 rounded-full bg-blue-900/60 hover:bg-blue-800 text-blue-100 flex flex-col justify-center">
+                    <span class="block w-4 h-[2px] bg-blue-100 mb-[3px]"></span>
+                    <span class="block w-4 h-[2px] bg-blue-100 mb-[3px]"></span>
+                    <span class="block w-4 h-[2px] bg-blue-100"></span>
+                </button>
+            </div>
+        </div>
+
+        <div class="flex-1 flex flex-col items-center justify-center bg-white p-4 gap-4 w-full">
+            <div class="hud-panel w-full max-w-3xl rounded-2xl overflow-hidden relative">
+                <div class="border-b border-slate-200 px-4 py-2 flex justify-between items-center text-[11px] text-slate-500">
+                    <span>Exam Camera · Live</span>
+                    <span class="text-amber-600 font-semibold">Detecting suspicious head turns & looking down</span>
+                </div>
+                <div class="relative bg-black">
+                    <video id="examVideo" class="hidden" playsinline></video>
+                    <canvas id="examCanvas" class="w-full h-[360px]"></canvas>
+
+                    <div id="examLoader" class="absolute inset-0 flex flex-col items-center justify-center z-30 hidden">
+                        <div class="w-16 h-16 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                        <h2 class="text-xl font-bold">LOADING EXAM AI</h2>
+                        <p class="text-sm mt-2">MoveNet Multi-Person Loading…</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="w-full max-w-3xl grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px]">
+                <div class="hud-panel rounded-xl px-3 py-2 flex flex-col">
+                    <span class="uppercase text-slate-500 font-semibold mb-1">Total Examinees</span>
+                    <span id="examTotalDisplay" class="text-lg font-bold text-slate-800">0</span>
+                </div>
+                <div class="hud-panel rounded-xl px-3 py-2 flex flex-col">
+                    <span class="uppercase text-slate-500 font-semibold mb-1">Suspicious</span>
+                    <span id="examSuspectDisplay" class="text-lg font-bold suspect-text">0</span>
+                </div>
+                <div class="hud-panel rounded-xl px-3 py-2 flex flex-col">
+                    <span class="uppercase text-slate-500 font-semibold mb-1">Status</span>
+                    <span id="examStatusText" class="text-xs font-semibold text-slate-700">
+                        Exam AI running · Combining head turn + head down.
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <div class="school-footer p-2 text-[10px] flex justify-center gap-6 border-t border-slate-300">
+            <span class="text-slate-600">
+                FOCUSAI Exam Mode · Multi-signal suspicion detection (beta)
+            </span>
+        </div>
+    </div>
+
+    <!-- STUDENTS PAGE -->
+    <div id="studentsView" class="hidden flex-1 flex flex-col overflow-hidden">
+        <div class="school-header p-4 flex justify-between items-center">
+            <div>
+                <h1 class="text-xl font-bold text-white tracking-widest">
+                    FOCUS<span class="text-yellow-300">AI</span>
+                </h1>
+                <p class="text-xs text-blue-200">Student Management</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="text-xs text-blue-100 text-right hidden sm:block">
+                    <div class="uppercase tracking-wide">Students</div>
+                    <div class="text-[10px]">Add student details for display</div>
+                </div>
+                <!-- Menu button -->
+                <button onclick="toggleMainMenu()"
+                    class="p-2 rounded-full bg-blue-900/60 hover:bg-blue-800 text-blue-100 flex flex-col justify-center">
+                    <span class="block w-4 h-[2px] bg-blue-100 mb-[3px]"></span>
+                    <span class="block w-4 h-[2px] bg-blue-100 mb-[3px]"></span>
+                    <span class="block w-4 h-[2px] bg-blue-100"></span>
+                </button>
+            </div>
+        </div>
+
+        <div class="flex-1 bg-slate-100 px-4 py-4 flex justify-center">
+            <div class="max-w-4xl w-full flex flex-col gap-4">
+                <div class="hud-panel rounded-2xl p-4 flex flex-col gap-2">
+                    <div class="flex justify-between items-center">
+                        <h2 class="text-sm font-bold text-slate-800">Add Student</h2>
+                        <div class="text-[11px] text-slate-500">
+                            Active Student:
+                            <span id="studentsActiveDisplay" class="font-semibold text-blue-700">None selected</span>
+                        </div>
+                    </div>
+
+                    <form id="studentForm" class="mt-2 grid grid-cols-1 md:grid-cols-4 gap-3" onsubmit="addStudent(event)">
+                        <div class="flex flex-col gap-1">
+                            <label class="text-[11px] font-semibold text-slate-600">Student Name</label>
+                            <input id="studentName" type="text" required
+                                class="border border-slate-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <label class="text-[11px] font-semibold text-slate-600">Roll No</label>
+                            <input id="studentRoll" type="text" required
+                                class="border border-slate-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <label class="text-[11px] font-semibold text-slate-600">Photo</label>
+                            <input id="studentImage" type="file" accept="image/*"
+                                class="text-[11px]">
+                        </div>
+                        <div class="flex items-end">
+                            <button type="submit"
+                                class="w-full md:w-auto px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-semibold hover:bg-blue-500">
+                                Add Student
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="hud-panel rounded-2xl p-4">
+                    <h2 class="text-sm font-bold text-slate-800 mb-2">Student List</h2>
+                    <div id="studentsList" class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                        <!-- Filled by JS -->
+                    </div>
+                    <div id="noStudentsMessage" class="text-[11px] text-slate-500 mt-2">
+                        No students added yet. Add a student using the form above.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="school-footer p-2 text-[10px] flex justify-center gap-6 border-t border-slate-300">
+            <span class="text-slate-600">Student details are shown in Class & Exam headers</span>
+        </div>
+    </div>
+
+    <!-- SETTINGS PAGE -->
+    <div id="settingsView" class="hidden flex-1 flex flex-col overflow-hidden">
+        <div class="school-header p-4 flex justify-between items-center">
+            <div>
+                <h1 class="text-xl font-bold text-white tracking-widest">
+                    FOCUS<span class="text-yellow-300">AI</span>
+                </h1>
+                <p class="text-xs text-blue-200">Settings</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="text-xs text-blue-100 text-right hidden sm:block">
+                    <div class="uppercase tracking-wide">Display & Theme</div>
+                    <div class="text-[10px]">Customize how FOCUSAI looks</div>
+                </div>
+                <!-- Menu button -->
+                <button onclick="toggleMainMenu()"
+                    class="p-2 rounded-full bg-blue-900/60 hover:bg-blue-800 text-blue-100 flex flex-col justify-center">
+                    <span class="block w-4 h-[2px] bg-blue-100 mb-[3px]"></span>
+                    <span class="block w-4 h-[2px] bg-blue-100 mb-[3px]"></span>
+                    <span class="block w-4 h-[2px] bg-blue-100"></span>
+                </button>
+            </div>
+        </div>
+
+        <div class="flex-1 bg-slate-100 px-4 py-4 flex justify-center">
+            <div class="max-w-3xl w-full flex flex-col gap-4">
+                <div class="hud-panel rounded-2xl p-4 flex justify-between items-center">
+                    <div>
+                        <h2 class="text-sm font-bold text-slate-800">Theme</h2>
+                        <p class="text-[11px] text-slate-500">
+                            Switch between light and dark mode.
+                        </p>
+                    </div>
+                    <select id="themeSelect"
+                        class="border border-slate-300 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+                        <option value="light">Light Mode</option>
+                        <option value="dark">Dark Mode</option>
+                    </select>
+                </div>
+
+                <div class="hud-panel rounded-2xl p-4 flex justify-between items-center">
+                    <div>
+                        <h2 class="text-sm font-bold text-slate-800">Font Size</h2>
+                        <p class="text-[11px] text-slate-500">
+                            Adjust the overall text size of the app.
+                        </p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <input id="fontSizeRange" type="range" min="90" max="120" value="100">
+                        <span id="fontSizeValue" class="text-xs text-slate-700">100%</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="school-footer p-2 text-[10px] flex justify-center gap-6 border-t border-slate-300">
+            <span class="text-slate-600">Settings only change this browser's view</span>
+        </div>
+    </div>
+
+    <!-- GLOBAL MENU DROPDOWN -->
+    <div id="mainMenu"
+        class="hidden fixed right-4 top-14 z-50 bg-white rounded-xl shadow-lg border border-slate-200 text-sm">
+        <button onclick="goHome()" class="block w-full text-left px-4 py-2 hover:bg-slate-100 border-b border-slate-100">
+            Home
+        </button>
+        <button onclick="openStudents()" class="block w-full text-left px-4 py-2 hover:bg-slate-100 border-b border-slate-100">
+            Students
+        </button>
+        <button onclick="openSettings()" class="block w-full text-left px-4 py-2 hover:bg-slate-100">
+            Settings
+        </button>
+    </div>
+
+    <script>
+        // ------------ COMMON / MODE SWITCHING + MENU -------------
+        const splashScreen = document.getElementById('splash-screen');
+        const modeSelection = document.getElementById('modeSelection');
+        const classApp = document.getElementById('classApp');
+        const examApp = document.getElementById('examApp');
+        const studentsView = document.getElementById('studentsView');
+        const settingsView = document.getElementById('settingsView');
+        const mainMenu = document.getElementById('mainMenu');
+
+        let currentTheme = 'light';
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // Splash → Home
+            setTimeout(() => {
+                splashScreen.classList.add('hidden');
+                modeSelection.classList.remove('hidden');
+            }, 3000);
+
+            // Settings listeners
+            const themeSelect = document.getElementById('themeSelect');
+            const fontSizeRange = document.getElementById('fontSizeRange');
+
+            if (themeSelect) {
+                themeSelect.addEventListener('change', () => {
+                    applyTheme(themeSelect.value);
+                });
+            }
+
+            if (fontSizeRange) {
+                fontSizeRange.addEventListener('input', (e) => {
+                    applyFontSize(e.target.value);
+                });
+                applyFontSize(fontSizeRange.value);
+            }
+
+            updateActiveStudentUI();
+        });
+
+        function toggleMainMenu() {
+            mainMenu.classList.toggle('hidden');
+        }
+        function closeMainMenu() {
+            mainMenu.classList.add('hidden');
+        }
+
+        function hideAllViews() {
+            modeSelection.classList.add('hidden');
+            classApp.classList.add('hidden');
+            examApp.classList.add('hidden');
+            studentsView.classList.add('hidden');
+            settingsView.classList.add('hidden');
+        }
+
+        function goHome() {
+            if (isRunning) stopSystem();
+            stopExamSystem();
+            hideAllViews();
+            modeSelection.classList.remove('hidden');
+            closeMainMenu();
+        }
+
+        function openStudents() {
+            if (isRunning) stopSystem();
+            stopExamSystem();
+            hideAllViews();
+            studentsView.classList.remove('hidden');
+            closeMainMenu();
+        }
+
+        function openSettings() {
+            hideAllViews();
+            settingsView.classList.remove('hidden');
+            closeMainMenu();
+        }
+
+        function selectMode(mode) {
+            modeSelection.classList.add('hidden');
+            if (mode === 'class') {
+                classApp.classList.remove('hidden');
+            } else if (mode === 'exam') {
+                examApp.classList.remove('hidden');
+                initExamSystem();
+            }
+            closeMainMenu();
+        }
+
+        // ------------ THEME & FONT SIZE -------------
+        function applyTheme(theme) {
+            currentTheme = theme;
+            const themeSelect = document.getElementById('themeSelect');
+            if (themeSelect && themeSelect.value !== theme) {
+                themeSelect.value = theme;
+            }
+            if (theme === 'dark') {
+                document.body.classList.add('dark-mode');
+            } else {
+                document.body.classList.remove('dark-mode');
+            }
+        }
+
+        function applyFontSize(percent) {
+            document.documentElement.style.fontSize = percent + '%';
+            const fontSizeValue = document.getElementById('fontSizeValue');
+            if (fontSizeValue) {
+                fontSizeValue.innerText = percent + '%';
+            }
+        }
+
+        // ------------ CLASS MODE (with recording) -------------
+        let detector;
+        let isRunning = false;
+        let isRecording = false;
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let stream = null;
+
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const loader = document.getElementById('loader');
+        const initBtn = document.getElementById('initBtn');
+        const recordStatus = document.getElementById('recordStatus');
+        const recordText = document.getElementById('recordText');
+
+        const countDisplay = document.getElementById('countDisplay');
+        const focusDisplay = document.getElementById('focusDisplay');
+        const senseSlider = document.getElementById('sensitivity');
+        const senseVal = document.getElementById('senseVal');
+
+        let STRICTNESS_THRESHOLD = 0.5;
+        senseSlider.oninput = (e) => {
+            STRICTNESS_THRESHOLD = e.target.value / 100;
+            senseVal.innerText = e.target.value + "%";
+        };
+
+        async function toggleSystem() {
+            if (!isRunning) {
+                await initSystem();
+            } else {
+                stopSystem();
+            }
+        }
+
+        async function initSystem() {
+            loader.classList.remove("hidden");
+            initBtn.disabled = true;
+
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 1280, height: 720, facingMode: 'user' }
+                });
+
+                video.srcObject = stream;
+                await new Promise(res => video.onloadedmetadata = res);
+                video.play();
+
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+
+                detector = await poseDetection.createDetector(
+                    poseDetection.SupportedModels.MoveNet,
+                    {
+                        modelType: poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING,
+                        enableSmoothing: true,
+                        minPoseScore: 0.25
+                    }
+                );
+
+                loader.classList.add("hidden");
+                isRunning = true;
+
+                initBtn.disabled = false;
+                initBtn.innerText = "STOP SYSTEM";
+                initBtn.classList.remove("bg-yellow-400", "hover:bg-yellow-300", "text-black");
+                initBtn.classList.add("bg-red-600", "hover:bg-red-500", "text-white");
+
+                startRecording();
+                renderLoop();
+
+            } catch (err) {
+                alert("Error starting webcam or AI: " + err.message);
+                loader.classList.add("hidden");
+                initBtn.disabled = false;
+            }
+        }
+
+        function stopSystem() {
+            isRunning = false;
+
+            if (isRecording && mediaRecorder && mediaRecorder.state !== "inactive") {
+                mediaRecorder.stop();
+            }
+
+            if (stream) {
+                stream.getTracks().forEach(t => t.stop());
+                stream = null;
+            }
+
+            initBtn.innerText = "START SYSTEM";
+            initBtn.classList.remove("bg-red-600", "hover:bg-red-500", "text-white");
+            initBtn.classList.add("bg-yellow-400", "hover:bg-yellow-300", "text-black");
+
+            recordStatus.classList.add("hidden");
+            recordStatus.classList.remove("recording-status");
+            recordText.classList.add("hidden");
+        }
+
+        async function renderLoop() {
+            if (!isRunning) return;
+
+            const poses = await detector.estimatePoses(video, {
+                maxPoses: 20,
+                flipHorizontal: false
+            });
+
+            drawResults(poses);
+            requestAnimationFrame(renderLoop);
+        }
+
+        function drawResults(poses) {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = "rgba(255,255,255,0.4)";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            let focusedCount = 0;
+            let total = 0;
+
+            poses.forEach(pose => {
+                if (pose.score < 0.25) return;
+                total++;
+
+                const nose = pose.keypoints.find(k => k.name === "nose");
+                const ls = pose.keypoints.find(k => k.name === "left_shoulder");
+                const rs = pose.keypoints.find(k => k.name === "right_shoulder");
+
+                let focused = false;
+
+                if (ls && rs && ls.score > 0.3 && rs.score > 0.3) {
+                    const center = (ls.x + rs.x) / 2;
+                    const width = Math.abs(ls.x - rs.x);
+
+                    if (nose && nose.score > 0.3) {
+                        const offset = Math.abs(nose.x - center);
+                        const allowed = width * (1 - STRICTNESS_THRESHOLD);
+                        if (offset < allowed) focused = true;
+                    }
+                }
+
+                if (focused) focusedCount++;
+
+                const color = focused ? "#059669" : "#dc2626";
+
+                if (nose) {
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.arc(nose.x, nose.y, 40, 0, 2 * Math.PI);
+                    ctx.stroke();
+
+                    ctx.fillStyle = color;
+                    ctx.font = "bold 14px Arial";
+                    ctx.fillText(focused ? "FOCUSED" : "DISTRACTED", nose.x - 30, nose.y - 50);
+                }
+
+                if (ls && rs) {
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    ctx.moveTo(ls.x, ls.y);
+                    ctx.lineTo(rs.x, rs.y);
+                    ctx.stroke();
+                }
+            });
+
+            countDisplay.innerText = total;
+            const pct = total > 0 ? Math.round((focusedCount / total) * 100) : 0;
+            focusDisplay.innerText = pct + "%";
+
+            if (pct > 80) focusDisplay.className = "text-2xl font-bold focused-text";
+            else if (pct > 50) focusDisplay.className = "text-2xl font-bold warning-text";
+            else focusDisplay.className = "text-2xl font-bold danger-text";
+        }
+
+        // Recording functions
+        function startRecording() {
+            if (!stream) {
+                console.warn("No stream to record.");
+                return;
+            }
+
+            try {
+                recordedChunks = [];
+
+                mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: "video/webm;codecs=vp9"
+                });
+
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data && event.data.size > 0) {
+                        recordedChunks.push(event.data);
+                    }
+                };
+
+                mediaRecorder.onstop = () => {
+                    isRecording = false;
+
+                    if (recordedChunks.length > 0) {
+                        const shouldDownload = confirm("Do you want to download the recorded video for this session?");
+                        if (shouldDownload) {
+                            saveRecording();
+                        } else {
+                            recordedChunks = [];
+                        }
+                    }
+                };
+
+                mediaRecorder.start();
+                isRecording = true;
+
+                recordStatus.classList.remove("hidden");
+                recordStatus.classList.add("recording-status");
+                recordText.classList.remove("hidden");
+
+                console.log("Recording started.");
+            } catch (err) {
+                alert("Error starting recording: " + err.message);
+            }
+        }
+
+        function saveRecording() {
+            const blob = new Blob(recordedChunks, { type: "video/webm" });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement("a");
+            const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+            a.href = url;
+            a.download = `focusai-${timestamp}.webm`;
+
+            document.body.appendChild(a);
+            a.click();
+
+            setTimeout(() => {
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }, 100);
+
+            console.log("Recording saved.");
+        }
+
+        window.addEventListener("beforeunload", (e) => {
+            if (isRecording && mediaRecorder && mediaRecorder.state !== "inactive") {
+                mediaRecorder.stop();
+            }
+        });
+
+        // ------------ EXAM MODE (classroom-friendly detection) -------------
+        let examStream = null;
+        let examIsRunning = false;
+        let examDetector = null;
+
+        const examVideo = document.getElementById('examVideo');
+        const examCanvas = document.getElementById('examCanvas');
+        const examCtx = examCanvas.getContext('2d');
+        const examLoader = document.getElementById('examLoader');
+
+        const examTotalDisplay = document.getElementById('examTotalDisplay');
+        const examSuspectDisplay = document.getElementById('examSuspectDisplay');
+        const examStatusText = document.getElementById('examStatusText');
+
+        async function initExamSystem() {
+            if (examIsRunning) return;
+            examLoader.classList.remove('hidden');
+
+            try {
+                examStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: 1920,
+                        height: 1080,
+                        facingMode: 'environment'
+                    }
+                });
+
+                examVideo.srcObject = examStream;
+                await new Promise(res => examVideo.onloadedmetadata = res);
+                await examVideo.play();
+
+                examCanvas.width = examVideo.videoWidth;
+                examCanvas.height = examVideo.videoHeight;
+
+                examDetector = await poseDetection.createDetector(
+                    poseDetection.SupportedModels.MoveNet,
+                    {
+                        modelType: poseDetection.movenet.modelType.MULTIPOSE_LIGHTNING,
+                        enableSmoothing: true,
+                        minPoseScore: 0.15 // allow weaker poses (students far away)
+                    }
+                );
+
+                examLoader.classList.add('hidden');
+                examIsRunning = true;
+                examStatusText.innerText = "Exam AI running · Watching for side & down head movement.";
+
+                examRenderLoop();
+
+            } catch (err) {
+                alert("Error starting exam camera or AI: " + err.message);
+                examLoader.classList.add('hidden');
+            }
+        }
+
+        function stopExamSystem() {
+            examIsRunning = false;
+            if (examStream) {
+                examStream.getTracks().forEach(t => t.stop());
+                examStream = null;
+            }
+        }
+
+        async function examRenderLoop() {
+            if (!examIsRunning || !examDetector) return;
+
+            const poses = await examDetector.estimatePoses(examVideo, {
+                maxPoses: 30,  // classroom: many students
+                flipHorizontal: false
+            });
+
+            drawExamResults(poses);
+            requestAnimationFrame(examRenderLoop);
+        }
+
+        // CLASSROOM-FRIENDLY EXAM DETECTION
+        function drawExamResults(poses) {
+            examCtx.drawImage(examVideo, 0, 0, examCanvas.width, examCanvas.height);
+            examCtx.fillStyle = "rgba(0,0,0,0.25)";
+            examCtx.fillRect(0, 0, examCanvas.width, examCanvas.height);
+
+            let total = 0;
+            let suspects = 0;
+
+            poses.forEach(pose => {
+                // For far students we allow lower pose score
+                if (pose.score < 0.20) return;
+                total++;
+
+                const nose = pose.keypoints.find(k => k.name === "nose");
+                const ls   = pose.keypoints.find(k => k.name === "left_shoulder");
+                const rs   = pose.keypoints.find(k => k.name === "right_shoulder");
+
+                if (!nose || !ls || !rs) return;
+                if (nose.score < 0.25 || ls.score < 0.25 || rs.score < 0.25) return;
+
+                // ---- 1) HEAD TURN (left / right) ----
+                const centerX        = (ls.x + rs.x) / 2;
+                const shouldersWidth = Math.abs(ls.x - rs.x) || 1;
+                const headOffsetX    = Math.abs(nose.x - centerX);
+                const headTurnRatio  = headOffsetX / shouldersWidth; // 0 = centered
+
+                // ---- 2) HEAD DOWN (rough, no hips needed) ----
+                const shouldersY     = (ls.y + rs.y) / 2;
+                const headDownOffset = nose.y - shouldersY;   // how far below shoulders
+                const headDownRatio  = headDownOffset / (shouldersWidth * 1.2); 
+                // shouldersWidth * 1.2 ~ approx torso length for far view
+
+                // ---- 3) SUSPICION SCORE ----
+                let suspicionScore = 0;
+
+                // Side looking – smaller threshold for far camera
+                if (headTurnRatio > 0.35) suspicionScore += 1;
+                if (headTurnRatio > 0.55) suspicionScore += 1;  // strong side look
+
+                // Looking down at desk/phone
+                if (headDownRatio > 0.25) suspicionScore += 1;
+                if (headDownRatio > 0.40) suspicionScore += 1;  // head very down
+
+                const suspicious = suspicionScore >= 2; // need at least 2 reasons
+
+                if (suspicious) suspects++;
+
+                // ---- 4) DRAW OVERLAY ----
+                const color = suspicious ? "#dc2626" : "#16a34a";
+                const label = suspicious ? "SUSPECT" : "OK";
+
+                // Head circle + label
+                examCtx.strokeStyle = color;
+                examCtx.lineWidth = 2;
+                examCtx.beginPath();
+                examCtx.arc(nose.x, nose.y, shouldersWidth * 0.9, 0, 2 * Math.PI); // radius scaled to body size
+                examCtx.stroke();
+
+                examCtx.fillStyle = color;
+                examCtx.font = "bold 12px Arial";
+                examCtx.fillText(label, nose.x - 20, nose.y - shouldersWidth);
+
+                // Shoulder line
+                examCtx.strokeStyle = color;
+                examCtx.lineWidth = 3;
+                examCtx.beginPath();
+                examCtx.moveTo(ls.x, ls.y);
+                examCtx.lineTo(rs.x, rs.y);
+                examCtx.stroke();
+            });
+
+            examTotalDisplay.innerText = total;
+            examSuspectDisplay.innerText = suspects;
+        }
+
+        // ------------ STUDENT DATA & DISPLAY -------------
+        let students = [];
+        let activeStudent = null;
+
+        function addStudent(event) {
+            event.preventDefault();
+            const nameInput = document.getElementById('studentName');
+            const rollInput = document.getElementById('studentRoll');
+            const imageInput = document.getElementById('studentImage');
+
+            const name = nameInput.value.trim();
+            const roll = rollInput.value.trim();
+            const file = imageInput.files[0];
+
+            if (!name || !roll) {
+                alert("Please enter both name and roll number.");
+                return;
+            }
+
+            const handleAdd = (imageData) => {
+                const student = {
+                    id: Date.now(),
+                    name,
+                    roll,
+                    image: imageData || null
+                };
+                students.push(student);
+                renderStudentsList();
+                document.getElementById('studentForm').reset();
+            };
+
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    handleAdd(reader.result);
+                };
+                reader.readAsDataURL(file);
+            } else {
+                handleAdd(null);
+            }
+        }
+
+        function renderStudentsList() {
+            const container = document.getElementById('studentsList');
+            const noMsg = document.getElementById('noStudentsMessage');
+            if (!container) return;
+
+            container.innerHTML = '';
+
+            if (students.length === 0) {
+                if (noMsg) noMsg.style.display = 'block';
+                return;
+            } else {
+                if (noMsg) noMsg.style.display = 'none';
+            }
+
+            students.forEach((s, index) => {
+                const card = document.createElement('div');
+                card.className = "border border-slate-200 rounded-xl bg-white px-3 py-2 flex gap-3 items-center";
+
+                const avatarWrapper = document.createElement('div');
+                avatarWrapper.className = "w-12 h-12 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center text-xs text-slate-600";
+                if (s.image) {
+                    const img = document.createElement('img');
+                    img.src = s.image;
+                    img.alt = s.name;
+                    img.className = "w-full h-full object-cover";
+                    avatarWrapper.appendChild(img);
+                } else {
+                    avatarWrapper.textContent = "No Image";
+                }
+
+                const infoDiv = document.createElement('div');
+                infoDiv.className = "flex-1";
+                const nameEl = document.createElement('div');
+                nameEl.className = "text-sm font-semibold text-slate-800";
+                nameEl.textContent = s.name;
+                const rollEl = document.createElement('div');
+                rollEl.className = "text-[11px] text-slate-500";
+                rollEl.textContent = "Roll No: " + s.roll;
+                infoDiv.appendChild(nameEl);
+                infoDiv.appendChild(rollEl);
+
+                const btnDiv = document.createElement('div');
+                btnDiv.className = "flex flex-col items-end gap-1";
+                const setBtn = document.createElement('button');
+                setBtn.type = "button";
+                setBtn.className = "px-3 py-1 rounded-md bg-blue-600 text-white text-[11px] font-semibold hover:bg-blue-500";
+                setBtn.textContent = "Set Active";
+                setBtn.onclick = () => setActiveStudent(index);
+
+                btnDiv.appendChild(setBtn);
+
+                card.appendChild(avatarWrapper);
+                card.appendChild(infoDiv);
+                card.appendChild(btnDiv);
+
+                container.appendChild(card);
+            });
+
+            updateActiveStudentUI();
+        }
+
+        function setActiveStudent(index) {
+            activeStudent = students[index];
+            updateActiveStudentUI();
+            alert("Active student set to: " + activeStudent.name + " (Roll " + activeStudent.roll + ")");
+        }
+
+        function updateActiveStudentUI() {
+            const name = activeStudent ? activeStudent.name : '--';
+            const roll = activeStudent ? activeStudent.roll : '--';
+
+            const nameLabel = document.getElementById('activeStudentNameLabel');
+            const rollLabel = document.getElementById('activeStudentRollLabel');
+            const examNameLabel = document.getElementById('examActiveStudentNameLabel');
+            const examRollLabel = document.getElementById('examActiveStudentRollLabel');
+            const studentsActiveDisplay = document.getElementById('studentsActiveDisplay');
+
+            if (nameLabel) nameLabel.innerText = "Student: " + name;
+            if (rollLabel) rollLabel.innerText = "Roll No: " + roll;
+            if (examNameLabel) examNameLabel.innerText = "Student: " + name;
+            if (examRollLabel) examRollLabel.innerText = "Roll No: " + roll;
+            if (studentsActiveDisplay) {
+                if (activeStudent) {
+                    studentsActiveDisplay.innerText = name + " (Roll " + roll + ")";
+                } else {
+                    studentsActiveDisplay.innerText = "None selected";
+                }
+            }
+        }
+    </script>
+
+</body>
+</html>
